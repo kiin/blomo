@@ -33,7 +33,7 @@ setup(
         "Operating System :: OS Independent",
     ],
     install_requires=[],
-    python_requires=">=3.8",
-    entry_points={"console_scripts": ["blomo=blomo.main:main"]},
+    python_requires=">=3.6",
+    entry_points={"console_scripts": ["blomorun=blomo.main:main"]},
     include_package_data=True,
 )
