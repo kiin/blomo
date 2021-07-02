@@ -24,5 +24,12 @@ def create_raw_socket(intf):
     except socket.error as msg:
         print(f"Couldnt connect with the socket-server: {msg}\n terminating program")
         sys.exit(1)
-    
     return s
+
+def ethernet_unpack(data):
+    dest_mac, src_mac, eth_proto = struct.unpack("! 6s 6s H", data[:14])
+    return get_mac(dest_mac), get_mac(src_mac), socket.htons(eth_proto),  data[14:]
+
+def get_mac(mac_bytes):
+    mac = map("{:02x}".format, mac_bytes)
+    return (":".join(mac)).upper()

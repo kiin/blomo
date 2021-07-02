@@ -11,7 +11,7 @@ import logging
 import sys
 
 from blomo import __version__
-from blomo.network_utils import get_local_interfaces, get_mac_addr, create_raw_socket
+from blomo.network_utils import get_local_interfaces, get_mac_addr, create_raw_socket, ethernet_unpack
 
 
 logging.basicConfig(
@@ -20,6 +20,10 @@ logging.basicConfig(
     datefmt="%H:%M:%S"
 )
 LOG = logging.getLogger(__name__)
+
+TAB1 = "\t"
+TAB2 = "\t\t"
+TAB3 = "\t\t\t"
 
 def blomo(vip_intf, vip_targets, vip_ip, vip_port):
     """Entry point for running the script."""
@@ -44,11 +48,21 @@ def blomo(vip_intf, vip_targets, vip_ip, vip_port):
     LOG.info(f"Target IP list: {vip_targets}")
     LOG.info(f"Target MAC list: ['00:0C:29:98:EE:A9']")
     LOG.info("=============================")
-    LOG.info("Starting BLOMO Server")
+    LOG.info("Starting BLOMO Server\n")
 
     # Create Raw socket binded to passed Interface
     s = create_raw_socket(vip_intf)
-    s.listen(1)
+
+    # Listen on the raw socket
+    while True:
+        raw_data = s.recv(4096)
+        dest_mac, src_mac, eth_proto, data = ethernet_unpack(raw_data)
+        LOG.info("======= ETHERNET FRAME =======")
+        LOG.info(f"Destination Mac : {str(dest_mac)}")
+        LOG.info(f"Source Mac : {str(src_mac)}")
+        LOG.info(f"Protocol : {str(eth_proto)}")
+        LOG.info("=============================")
+
 
 def get_parser():
     parser = argparse.ArgumentParser(prog="blomo", description="HTTP Load Balancer.")
