@@ -1,23 +1,38 @@
 #!/usr/bin/env python3
 
 import socket
-import array
 import struct
 import fcntl
 import sys
 
+from enum import Enum
+
+
+class EtherType(Enum):
+    ARP = 2054
+    IPV4 = 2048
+
+
+class IpProto(Enum):
+    TCP = 6
+    UDP = 17
+
 
 def get_local_interfaces():
-    """ Returns a dictionary of name:ip key value pairs. """
+    """Returns a dictionary of name:ip key value pairs."""
     return socket.if_nameindex()
+
 
 def get_mac_addr(intf):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    info = fcntl.ioctl(s.fileno(), 0x8927,  struct.pack('256s', bytes(intf, 'utf-8')[:15]))
-    return ':'.join('%02x' % b for b in info[18:24])
+    info = fcntl.ioctl(
+        s.fileno(), 0x8927, struct.pack("256s", bytes(intf, "utf-8")[:15])
+    )
+    return ":".join("%02x" % b for b in info[18:24])
+
 
 def create_raw_socket(intf):
-    s = socket.socket( socket.AF_PACKET , socket.SOCK_RAW , socket.ntohs(0x0003))
+    s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         s.bind((intf, 0))
@@ -26,10 +41,60 @@ def create_raw_socket(intf):
         sys.exit(1)
     return s
 
+
+def ipv4_unpack(data):
+    (
+        version_header_length,
+        tos,
+        total_len,
+        identification,
+        flags_offset,
+        TTL,
+        ip_proto,
+        header_checksum,
+        source_ip,
+        destination_ip,
+    ) = struct.unpack("!BBHHHBBH4s4s", data[:20])
+    # Black magic
+    version = version_header_length >> 4
+    header_length = (version_header_length & 15) * 4
+
+    # Extracting x_bit, Do Not Fragment Flag and More Fragments Follow Flag.
+    x_bit = (flags_offset >> 15) & 1
+    DFF = (flags_offset >> 14) & 1
+    MFF = (flags_offset >> 13) & 1
+
+    # Extracting Fragment Offset
+    frag_offset = flags_offset & 8191
+
+    return (
+        version,
+        header_length,
+        tos,
+        total_len,
+        identification,
+        x_bit,
+        DFF,
+        MFF,
+        frag_offset,
+        TTL,
+        ip_proto,
+        header_checksum,
+        get_ipv4(source_ip),
+        get_ipv4(destination_ip),
+        data[20:],
+    )
+
+
 def ethernet_unpack(data):
-    dest_mac, src_mac, eth_proto = struct.unpack("! 6s 6s H", data[:14])
-    return get_mac(dest_mac), get_mac(src_mac), socket.htons(eth_proto),  data[14:]
+    dest_mac, src_mac, eth_type = struct.unpack("!6s6sH", data[:14])
+    return get_mac(dest_mac), get_mac(src_mac), eth_type, data[14:]
+
 
 def get_mac(mac_bytes):
     mac = map("{:02x}".format, mac_bytes)
     return (":".join(mac)).upper()
+
+
+def get_ipv4(ip_bytes):
+    return ".".join(map(str, ip_bytes))
