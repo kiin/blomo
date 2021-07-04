@@ -11,6 +11,7 @@ from enum import Enum
 class EtherType(Enum):
     ARP = 2054
     IPV4 = 2048
+    IPV6 = 34525
 
 
 class IpProto(Enum):
@@ -19,16 +20,8 @@ class IpProto(Enum):
 
 
 def get_local_interfaces():
-    """Returns a dictionary of name:ip key value pairs."""
+    """Returns a List of index:intf_name key value pairs."""
     return socket.if_nameindex()
-
-
-def get_mac_addr(intf):
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    info = fcntl.ioctl(
-        s.fileno(), 0x8927, struct.pack("256s", bytes(intf, "utf-8")[:15])
-    )
-    return ":".join("%02x" % b for b in info[18:24])
 
 
 def create_raw_socket(intf):
@@ -40,6 +33,35 @@ def create_raw_socket(intf):
         print(f"Couldnt connect with the socket-server: {msg}\n terminating program")
         sys.exit(1)
     return s
+
+
+def tcp_unpack(data):
+    (
+        source_port,
+        destination_port,
+        sequence_number,
+        ack_number,
+        header_length_reserved_flags,
+        window_size,
+        chucksum,
+        urgent_pointer,
+    ) = struct.unpack("!HHIIHHHH", data[:20])
+
+    header_length = (
+        header_length_reserved_flags >> 12
+    ) * 4  # * 4 is to get the value in Bytes
+
+    return (
+        source_port,
+        destination_port,
+        sequence_number,
+        ack_number,
+        header_length,
+        window_size,
+        chucksum,
+        urgent_pointer,
+        data[header_length:],
+    )
 
 
 def ipv4_unpack(data):
@@ -57,7 +79,9 @@ def ipv4_unpack(data):
     ) = struct.unpack("!BBHHHBBH4s4s", data[:20])
     # Black magic
     version = version_header_length >> 4
-    header_length = (version_header_length & 15) * 4
+    header_length = (
+        version_header_length & 15
+    ) * 4  # * 4 is to have the value in Bytes
 
     # Extracting x_bit, Do Not Fragment Flag and More Fragments Follow Flag.
     x_bit = (flags_offset >> 15) & 1
@@ -82,13 +106,21 @@ def ipv4_unpack(data):
         header_checksum,
         get_ipv4(source_ip),
         get_ipv4(destination_ip),
-        data[20:],
+        data[header_length:],
     )
 
 
 def ethernet_unpack(data):
     dest_mac, src_mac, eth_type = struct.unpack("!6s6sH", data[:14])
     return get_mac(dest_mac), get_mac(src_mac), eth_type, data[14:]
+
+
+def get_mac_addr(intf):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    info = fcntl.ioctl(
+        s.fileno(), 0x8927, struct.pack("256s", bytes(intf, "utf-8")[:15])
+    )
+    return ":".join("%02x" % b for b in info[18:24])
 
 
 def get_mac(mac_bytes):

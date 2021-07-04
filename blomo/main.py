@@ -12,8 +12,7 @@ import sys
 
 from blomo import __version__
 
-# get_local_interfaces, get_mac_addr, create_raw_socket, ethernet_unpack, EtherTypeName
-# from blomo.network_utils import * as net_util
+from blomo.classes import EtherFrame
 import blomo.network_utils as net_utils
 
 
@@ -64,26 +63,17 @@ def blomo(vip_intf, vip_targets, vip_ip, vip_port):
 
     # Listen on the raw socket
     while True:
-        raw_data = s.recv(4096)
+        raw_data, addr = s.recvfrom(65565)
         dest_mac, src_mac, eth_type, ether_data = net_utils.ethernet_unpack(raw_data)
-        LOG.info("========== ETHERNET FRAME ==========")
-        LOG.info(f"Destination Mac : {dest_mac}")
-        LOG.info(f"Source Mac : {src_mac}")
-        LOG.info(f"EtherType : {eth_type}")
-        if eth_type == net_utils.EtherType.ARP.value:
-            LOG.warning("ARP Packat found, following actions will be executed :")
-            LOG.info("Check if the ARP request is sent to the Virtual IP address")
-            LOG.info(
-                "If yes, generate a raw Ethernet ARP reply and transmit it back to the requester using the fake MAC address (00:11:11:....) owned by the load balancer."
-            )
-            LOG.info(
-                "The requester will learn this Virtual IP <-> Virtual MAC address pairing."
-            )
-            LOG.info("====================================\n")
-        elif eth_type == net_utils.EtherType.IPV4.value:
+
+        # Isolate only Frames that matter (destination is Virtual Mac address and EtherType is IPv4)
+        if (
+            dest_mac == net_utils.get_mac_addr(vip_intf)
+            and eth_type == net_utils.EtherType.IPV4.value
+        ):
             # IP Packat found, unpacking it
             (
-                version,
+                ip_version,
                 header_len,
                 tos,
                 total_len,
@@ -99,19 +89,70 @@ def blomo(vip_intf, vip_targets, vip_ip, vip_port):
                 destination_ip,
                 ip_data,
             ) = net_utils.ipv4_unpack(ether_data)
-            LOG.info("========= IP Packet =========")
-            LOG.info(f"Version : {version}")
-            LOG.info(f"Header Length : {header_len}")
-            LOG.info(f"Total Length : {total_len}")
-            LOG.info(f"Time To Live : {TTL}")
-            LOG.info(f"Protocol : {ip_proto}")
-            LOG.info(f"Destination IP : {destination_ip}")
-            LOG.info(f"Source IP : {source_ip}")
-            LOG.info("=============================")
-            # if proto is TCP or UDP -> unpackit
+            if ip_proto == net_utils.IpProto.TCP.value:
+                (
+                    source_port,
+                    destination_port,
+                    sequence_number,
+                    ack_number,
+                    header_length,
+                    window_size,
+                    chucksum,
+                    urgent_pointer,
+                    tcp_data,
+                ) = net_utils.tcp_unpack(ip_data)
+                # Display Frame->Packet->Segment
+                ether_frame = EtherFrame(
+                    dest_mac,
+                    src_mac,
+                    eth_type,
+                    ip_version,
+                    header_len,
+                    total_len,
+                    TTL,
+                    ip_proto,
+                    destination_ip,
+                    source_ip,
+                    destination_port,
+                    source_port,
+                    header_length,
+                )
+                show_ether_frame(ether_frame.to_dict())
+
+        if eth_type == net_utils.EtherType.ARP.value:
+            LOG.warning("ARP Packat found, following actions will be executed :")
+            LOG.info("Check if the ARP request is sent to the Virtual IP address")
+            LOG.info(
+                "If yes, generate a raw Ethernet ARP reply and transmit it back to the requester using the fake MAC address (00:11:11:....) owned by the load balancer."
+            )
+            LOG.info(
+                "The requester will learn this Virtual IP <-> Virtual MAC address pairing."
+            )
             LOG.info("====================================\n")
-        else:
-            LOG.info("====================================\n")
+
+
+def show_ether_frame(ether_frame: EtherFrame):
+    LOG.info("========== ETHERNET FRAME ==========")
+    LOG.info(f"Destination Mac : {ether_frame['destination_mac']}")
+    LOG.info(f"Source Mac : {ether_frame['source_mac']}")
+    LOG.info(f"EtherType : {ether_frame['ethernet_type']}")
+    LOG.info("=======  IPv4 Packet   =======")
+    LOG.info(f"Version : {ether_frame['ip_packet']['version']}")
+    LOG.info(f"Header Length : {ether_frame['ip_packet']['header_length']} Bytes")
+    LOG.info(f"Total Length : {ether_frame['ip_packet']['header_total_length']}")
+    LOG.info(f"Time To Live : {ether_frame['ip_packet']['time_to_live']}")
+    LOG.info(f"Protocol : {ether_frame['ip_packet']['protocol']}")
+    LOG.info(f"Destination IP : {ether_frame['ip_packet']['destination_ip']}")
+    LOG.info(f"Source IP : {ether_frame['ip_packet']['source_ip']}")
+    LOG.info("====  TCP Segment   ====")
+    LOG.info(
+        f"Destination Port : {ether_frame['ip_packet']['tcp_segment']['destination_port']}"
+    )
+    LOG.info(f"Source Port : {ether_frame['ip_packet']['tcp_segment']['source_port']}")
+    LOG.info(
+        f"Header Length : {ether_frame['ip_packet']['tcp_segment']['header_length']} Bytes"
+    )
+    LOG.info("====================================\n")
 
 
 def get_parser():
