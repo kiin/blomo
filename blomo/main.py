@@ -1,18 +1,12 @@
 #!/usr/bin/env python3
 
-"""
-Command line interface
-
-Bogdan Lozhkin
-"""
-
 import argparse
 import logging
 import sys
 
 from blomo import __version__
 
-from blomo.classes import EtherFrame
+from blomo.classes import Frame, Packet, Segment
 import blomo.network_utils as net_utils
 
 
@@ -64,62 +58,26 @@ def blomo(vip_intf, vip_targets, vip_ip, vip_port):
     # Listen on the raw socket
     while True:
         raw_data, addr = s.recvfrom(65565)
-        dest_mac, src_mac, eth_type, ether_data = net_utils.ethernet_unpack(raw_data)
+        ethernet_frame = Frame(*net_utils.ethernet_unpack(raw_data))
 
         # Isolate only Frames that matter (destination is Virtual Mac address and EtherType is IPv4)
         if (
-            dest_mac == net_utils.get_mac_addr(vip_intf)
-            and eth_type == net_utils.EtherType.IPV4.value
+            ethernet_frame.destination_mac_address == net_utils.get_mac_addr(vip_intf)
+            and ethernet_frame.type == net_utils.EtherType.IPV4.value
         ):
             # IP Packat found, unpacking it
-            (
-                ip_version,
-                header_len,
-                tos,
-                total_len,
-                identification,
-                x_bit,
-                DFF,
-                MFF,
-                frag_offset,
-                TTL,
-                ip_proto,
-                header_checksum,
-                source_ip,
-                destination_ip,
-                ip_data,
-            ) = net_utils.ipv4_unpack(ether_data)
-            if ip_proto == net_utils.IpProto.TCP.value:
-                (
-                    source_port,
-                    destination_port,
-                    sequence_number,
-                    ack_number,
-                    header_length,
-                    window_size,
-                    chucksum,
-                    urgent_pointer,
-                    tcp_data,
-                ) = net_utils.tcp_unpack(ip_data)
-                # Display Frame->Packet->Segment
-                ether_frame = EtherFrame(
-                    dest_mac,
-                    src_mac,
-                    eth_type,
-                    ip_version,
-                    header_len,
-                    total_len,
-                    TTL,
-                    ip_proto,
-                    destination_ip,
-                    source_ip,
-                    destination_port,
-                    source_port,
-                    header_length,
-                )
-                show_ether_frame(ether_frame.to_dict())
+            ipv4_packet = Packet(*net_utils.ipv4_unpack(ethernet_frame.raw_data))
 
-        if eth_type == net_utils.EtherType.ARP.value:
+            if ipv4_packet.ip_proto == net_utils.IpProto.TCP.value:
+                tcp_segment = Segment(*net_utils.tcp_unpack(ipv4_packet.raw_data))
+                show_full_packet(
+                    ethernet_frame.to_dict(),
+                    ipv4_packet.to_dict(),
+                    tcp_segment.to_dict(),
+                )
+
+        if ethernet_frame.type == net_utils.EtherType.ARP.value:
+            """
             LOG.warning("ARP Packat found, following actions will be executed :")
             LOG.info("Check if the ARP request is sent to the Virtual IP address")
             LOG.info(
@@ -129,29 +87,26 @@ def blomo(vip_intf, vip_targets, vip_ip, vip_port):
                 "The requester will learn this Virtual IP <-> Virtual MAC address pairing."
             )
             LOG.info("====================================\n")
+            """
 
-
-def show_ether_frame(ether_frame: EtherFrame):
+def show_full_packet(frame: Frame, packet: Packet, segment: Segment):
+    # Display Frame->Packet->Segment
     LOG.info("========== ETHERNET FRAME ==========")
-    LOG.info(f"Destination Mac : {ether_frame['destination_mac']}")
-    LOG.info(f"Source Mac : {ether_frame['source_mac']}")
-    LOG.info(f"EtherType : {ether_frame['ethernet_type']}")
+    LOG.info(f"Destination Mac : {frame['destination_mac']}")
+    LOG.info(f"Source Mac : {frame['source_mac']}")
+    LOG.info(f"EtherType : {frame['ethernet_type']}")
     LOG.info("=======  IPv4 Packet   =======")
-    LOG.info(f"Version : {ether_frame['ip_packet']['version']}")
-    LOG.info(f"Header Length : {ether_frame['ip_packet']['header_length']} Bytes")
-    LOG.info(f"Total Length : {ether_frame['ip_packet']['header_total_length']}")
-    LOG.info(f"Time To Live : {ether_frame['ip_packet']['time_to_live']}")
-    LOG.info(f"Protocol : {ether_frame['ip_packet']['protocol']}")
-    LOG.info(f"Destination IP : {ether_frame['ip_packet']['destination_ip']}")
-    LOG.info(f"Source IP : {ether_frame['ip_packet']['source_ip']}")
+    LOG.info(f"Version : {packet['version']}")
+    LOG.info(f"Header Length : {packet['header_length']} Bytes")
+    LOG.info(f"Total Length : {packet['header_total_length']}")
+    LOG.info(f"Time To Live : {packet['time_to_live']}")
+    LOG.info(f"Protocol : {packet['protocol']}")
+    LOG.info(f"Destination IP : {packet['destination_ip']}")
+    LOG.info(f"Source IP : {packet['source_ip']}")
     LOG.info("====  TCP Segment   ====")
-    LOG.info(
-        f"Destination Port : {ether_frame['ip_packet']['tcp_segment']['destination_port']}"
-    )
-    LOG.info(f"Source Port : {ether_frame['ip_packet']['tcp_segment']['source_port']}")
-    LOG.info(
-        f"Header Length : {ether_frame['ip_packet']['tcp_segment']['header_length']} Bytes"
-    )
+    LOG.info(f"Destination Port : {segment['destination_port']}")
+    LOG.info(f"Source Port : {segment['source_port']}")
+    LOG.info(f"Header Length : {segment['header_length']} Bytes")
     LOG.info("====================================\n")
 
 
