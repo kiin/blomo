@@ -46,15 +46,17 @@ def blomo(vip_intf, vip_targets, vip_ip, vip_port):
     LOG.info(f"VIP interface: {vip_intf}")
     LOG.info(f"VIP IP: {vip_ip}")
     LOG.info(f"VIP Port: {vip_port}")
-    LOG.info(f"VIP MAC Address: {net_utils.get_mac_addr(vip_intf)}")
+    LOG.info(f"VIP MAC Address: {net_utils.get_intf_mac_address(vip_intf)}")
     LOG.info(f"Target IP list: {vip_targets}")
     LOG.info("Target MAC list: ['00:0C:29:98:EE:A9']")
     LOG.info("=============================")
     LOG.info("Starting BLOMO Server...\n")
 
+    # TODO: Get MAC addresses from the Servers ip addresses
+
     # Create Raw socket binded to passed Interface
     s = net_utils.create_raw_socket(vip_intf)
-
+    current_server_id = -1
     # Listen on the raw socket
     while True:
         raw_data, addr = s.recvfrom(65565)
@@ -62,7 +64,8 @@ def blomo(vip_intf, vip_targets, vip_ip, vip_port):
 
         # Isolate only Frames that matter (destination is Virtual Mac address and EtherType is IPv4)
         if (
-            ethernet_frame.destination_mac_address == net_utils.get_mac_addr(vip_intf)
+            ethernet_frame.destination_mac_address
+            == net_utils.get_intf_mac_address(vip_intf)
             and ethernet_frame.type == net_utils.EtherType.IPV4.value
         ):
             # IP Packat found, unpacking it
@@ -70,11 +73,42 @@ def blomo(vip_intf, vip_targets, vip_ip, vip_port):
 
             if ipv4_packet.ip_proto == net_utils.IpProto.TCP.value:
                 tcp_segment = Segment(*net_utils.tcp_unpack(ipv4_packet.raw_data))
+
+                # Round Robin server selection (TODO: redis storing the same source info to link it to same Server)
+                current_server, current_server_id = get_next_server(
+                    current_server_id, vip_targets.split(",")
+                )
+                LOG.info(f"Sending to Server : ({current_server_id}, {current_server})")
+
                 show_full_packet(
                     ethernet_frame.to_dict(),
                     ipv4_packet.to_dict(),
                     tcp_segment.to_dict(),
                 )
+
+                # Next Steps
+                # Change destination MAC to one of the Servers (vip_targets)
+                server_mac_address = net_utils.discover_mac_address(current_server)
+                server_mac_address_byte_list = [
+                    "0x" + i for i in server_mac_address.split(":")
+                ]
+                source_mac_address_byte_list = [
+                    "0x" + i for i in ethernet_frame.source_mac_address.split(":")
+                ]
+                custom_frame_header = (
+                    server_mac_address_byte_list
+                    + source_mac_address_byte_list
+                    + ["0x08", "0x00"]
+                )
+                LOG.info(custom_frame_header)
+
+                """
+                dst=52:54:00:12:35:02, src=fe:ed:fa:ce:be:ef, type=0x0800 (IP)
+                
+                """
+                # packed_ethernet_frame = net_utils.pack(raw_ethernet_header)
+                # re-transmit the packet
+                # net_utils.send_eth(custom_frame_header, ethernet_frame.raw_data, vip_intf)
 
         if ethernet_frame.type == net_utils.EtherType.ARP.value:
             """
@@ -88,6 +122,16 @@ def blomo(vip_intf, vip_targets, vip_ip, vip_port):
             )
             LOG.info("====================================\n")
             """
+
+
+def get_next_server(current_server_id, server_list):
+    return (
+        server_list[current_server_id + 1]
+        if current_server_id + 1 < len(server_list)
+        else server_list[0],
+        current_server_id + 1 if current_server_id + 1 < len(server_list) else 0,
+    )
+
 
 def show_full_packet(frame: Frame, packet: Packet, segment: Segment):
     # Display Frame->Packet->Segment

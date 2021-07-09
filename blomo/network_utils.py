@@ -4,7 +4,9 @@ import socket
 import struct
 import fcntl
 import sys
+import re
 
+from subprocess import Popen, PIPE
 from enum import Enum
 
 
@@ -110,12 +112,27 @@ def ipv4_unpack(data):
     )
 
 
+def send_eth(ethernet_header, payload, interface="virtual0"):
+    """Send raw Ethernet packet on interface."""
+    s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+
+    # From the docs: "For raw packet
+    # sockets the address is a tuple (ifname, proto [,pkttype [,hatype]])"
+    s.bind((interface, 0))
+    return s.send(ethernet_header + payload)
+
+
+def pack(byte_sequence):
+    """Convert list of bytes to byte string."""
+    return b"".join(map(chr, byte_sequence))
+
+
 def ethernet_unpack(data):
     dest_mac, src_mac, eth_type = struct.unpack("!6s6sH", data[:14])
     return get_mac(dest_mac), get_mac(src_mac), eth_type, data[14:]
 
 
-def get_mac_addr(intf):
+def get_intf_mac_address(intf):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     info = fcntl.ioctl(
         s.fileno(), 0x8927, struct.pack("256s", bytes(intf, "utf-8")[:15])
@@ -130,3 +147,10 @@ def get_mac(mac_bytes):
 
 def get_ipv4(ip_bytes):
     return ".".join(map(str, ip_bytes))
+
+
+def discover_mac_address(ip):
+    pid = Popen(["arp", "-n", ip], stdout=PIPE)
+    s = pid.communicate()[0]
+    mac = re.search(r"(([a-f\d]{1,2}\:){5}[a-f\d]{1,2})", str(s)).groups()[0]
+    return mac
