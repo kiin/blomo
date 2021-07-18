@@ -29,6 +29,7 @@ def get_local_interfaces():
 def create_raw_socket(intf):
     s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     try:
         s.bind((intf, 0))
     except socket.error as msg:
@@ -106,20 +107,20 @@ def ipv4_unpack(data):
         TTL,
         ip_proto,
         header_checksum,
-        get_ipv4(source_ip),
         get_ipv4(destination_ip),
+        get_ipv4(source_ip),
         data[header_length:],
     )
 
 
-def send_eth(ethernet_header, payload, interface="virtual0"):
+def send_eth(ethernet_header, payload, server_ip, interface):
     """Send raw Ethernet packet on interface."""
-    s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-
-    # From the docs: "For raw packet
-    # sockets the address is a tuple (ifname, proto [,pkttype [,hatype]])"
+    s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     s.bind((interface, 0))
-    return s.send(ethernet_header + payload)
+    s.send(ethernet_header + payload)
+    return s.close()
 
 
 def pack(byte_sequence):
@@ -153,4 +154,4 @@ def discover_mac_address(ip):
     pid = Popen(["arp", "-n", ip], stdout=PIPE)
     s = pid.communicate()[0]
     mac = re.search(r"(([a-f\d]{1,2}\:){5}[a-f\d]{1,2})", str(s)).groups()[0]
-    return mac
+    return str(mac)

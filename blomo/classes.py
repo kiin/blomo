@@ -15,6 +15,7 @@ class Frame:
             "destination_mac": self.destination_mac_address,
             "source_mac": self.source_mac_address,
             "ethernet_type": self.type,
+            "raw_data": self.raw_data,
         }
 
 
